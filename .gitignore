@@ -1,0 +1,10 @@
+# ISOs (too large for git)
+*.iso
+
+# VM disk images
+*.qcow2
+
+# Editor
+.vscode/
+*.swp
+*~
