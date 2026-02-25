@@ -1,55 +1,20 @@
 #!/usr/bin/env bash
 # =============================================================================
 # manage.sh — Manage the Astroneer Windows VM
-# Usage: ./manage.sh <command>
+# Usage: ./manage.sh [--dry-run] <command> [args...]
 # =============================================================================
 set -euo pipefail
 
+# ---------- load shared libraries ----------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/config.env"
+readonly SCRIPT_DIR
+for lib in common env ssh vm; do
+    # shellcheck disable=SC1090
+    source "$SCRIPT_DIR/lib/${lib}.sh"
+done
 
-# Colors
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; DIM='\033[2m'; NC='\033[0m'
-info()  { echo -e "${CYAN}==> $*${NC}"; }
-ok()    { echo -e "${GREEN}  ✓ $*${NC}"; }
-warn()  { echo -e "${YELLOW}  ⚠ $*${NC}"; }
-
-# SSH helper
-vm_ssh() {
-    sshpass -p "$WIN_PASSWORD" ssh \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        -o LogLevel=ERROR \
-        "$WIN_USERNAME@$VM_IP" "$@"
-}
-
-vm_ssh_quiet() {
-    vm_ssh "$@" 2>/dev/null
-}
-
-# Check if VM is running
-vm_running() {
-    sudo virsh domstate "$VM_NAME" 2>/dev/null | grep -q "running"
-}
-
-# Check if SSH is reachable
-ssh_ready() {
-    vm_ssh_quiet "echo ok" &>/dev/null
-}
-
-# Wait for SSH with timeout
-wait_ssh() {
-    local timeout=${1:-120}
-    local elapsed=0
-    while [ $elapsed -lt $timeout ]; do
-        if ssh_ready; then return 0; fi
-        sleep 5
-        elapsed=$((elapsed + 5))
-        printf "\r  Waiting for SSH... %ds" $elapsed
-    done
-    echo ""
-    return 1
-}
+# ---------- init ----------
+init_env
 
 # =============================================================================
 # Commands
@@ -60,11 +25,11 @@ cmd_start() {
         ok "VM is already running"
     else
         info "Starting VM: $VM_NAME"
-        sudo virsh start "$VM_NAME"
+        run sudo virsh start "$VM_NAME"
     fi
 
     info "Waiting for SSH..."
-    if wait_ssh 180; then
+    if wait_ssh "$SSH_TIMEOUT_START"; then
         echo ""
         ok "VM ready — SSH: $WIN_USERNAME@$VM_IP"
     else
@@ -84,20 +49,19 @@ cmd_stop() {
     if ssh_ready; then
         vm_ssh_quiet "Stop-Computer -Force" || true
     else
-        sudo virsh shutdown "$VM_NAME"
+        run sudo virsh shutdown "$VM_NAME"
     fi
 
     # Wait for shutdown
-    local timeout=60
     local elapsed=0
-    while [ $elapsed -lt $timeout ] && vm_running; do
+    while [[ "$elapsed" -lt "$SHUTDOWN_TIMEOUT" ]] && vm_running; do
         sleep 3
         elapsed=$((elapsed + 3))
     done
 
     if vm_running; then
         warn "Graceful shutdown timed out, forcing..."
-        sudo virsh destroy "$VM_NAME"
+        run sudo virsh destroy "$VM_NAME"
     fi
     ok "VM stopped"
 }
@@ -113,7 +77,7 @@ cmd_status() {
     local state
     state=$(sudo virsh domstate "$VM_NAME" 2>/dev/null || echo "not found")
     
-    if [ "$state" = "running" ]; then
+    if [[ "$state" == "running" ]]; then
         echo -e "  VM:       ${GREEN}running${NC}"
     else
         echo -e "  VM:       ${RED}${state}${NC}"
@@ -156,30 +120,20 @@ cmd_status() {
 }
 
 cmd_ssh() {
-    if ! vm_running; then
-        fail "VM is not running. Start it with: ./manage.sh start"
-    fi
+    require_running
     info "Connecting via SSH..."
-    # Interactive SSH (no sshpass in interactive mode for cleaner experience)
-    sshpass -p "$WIN_PASSWORD" ssh \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
+    # Interactive SSH — uses SSHPASS env var (sshpass -e)
+    SSHPASS="$WIN_PASSWORD" sshpass -e ssh \
+        "${SSH_OPTS[@]}" \
         "$WIN_USERNAME@$VM_IP"
 }
 
 cmd_provision() {
-    if ! vm_running; then
-        fail "VM is not running. Start it with: ./manage.sh start"
-    fi
-    if ! ssh_ready; then
-        fail "SSH is not available yet. Wait and retry."
-    fi
+    require_running
+    require_ssh
 
     info "Copying setup script to VM..."
-    sshpass -p "$WIN_PASSWORD" scp \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        "$SCRIPT_DIR/setup-astroneer.ps1" \
+    vm_scp "$SCRIPT_DIR/setup-astroneer.ps1" \
         "$WIN_USERNAME@$VM_IP:C:/setup-astroneer.ps1"
     ok "Script copied"
 
@@ -193,9 +147,7 @@ cmd_provision() {
 }
 
 cmd_start_server() {
-    if ! ssh_ready; then
-        fail "SSH is not available. Is the VM running?"
-    fi
+    require_ssh
     info "Starting Astroneer server..."
     vm_ssh "Start-Process -FilePath 'C:\start-astroneer.bat' -WindowStyle Hidden"
     ok "Astroneer server starting"
@@ -203,46 +155,57 @@ cmd_start_server() {
 }
 
 cmd_stop_server() {
-    if ! ssh_ready; then
-        fail "SSH is not available. Is the VM running?"
-    fi
+    require_ssh
     info "Stopping Astroneer server..."
     vm_ssh "Stop-Process -Name AstroServer -Force -ErrorAction SilentlyContinue" || true
     ok "Astroneer server stopped"
 }
 
 cmd_update() {
-    if ! ssh_ready; then
-        fail "SSH is not available. Is the VM running?"
-    fi
+    require_ssh
     info "Updating Astroneer server via SteamCMD..."
     vm_ssh "C:\steamcmd\steamcmd.exe +force_install_dir C:\AstroneerServer +login anonymous +app_update 728470 +quit"
     ok "Update complete"
 }
 
 cmd_logs() {
+    local lines="$LOG_TAIL_DEFAULT"
+    local follow=false
+    for arg in "$@"; do
+        # shellcheck disable=SC2249
+        case "$arg" in
+            --lines=*) lines="${arg#*=}" ;;
+            --follow|-f) follow=true ;;
+        esac
+    done
+
     if ! ssh_ready; then
         # Fall back to libvirt logs
         sudo cat "/var/log/libvirt/qemu/${VM_NAME}.log" 2>/dev/null || echo "No logs found"
         return
     fi
-    info "Astroneer server logs:"
-    vm_ssh "Get-Content -Path 'C:\AstroneerServer\Astro\Saved\Logs\AstroServerLog.log' -Tail 50 -ErrorAction SilentlyContinue" 2>/dev/null || \
-        warn "No Astroneer logs found yet"
+    info "Astroneer server logs (last $lines lines):"
+    if [[ "$follow" == true ]]; then
+        vm_ssh "Get-Content -Path 'C:\AstroneerServer\Astro\Saved\Logs\AstroServerLog.log' -Tail $lines -Wait -ErrorAction SilentlyContinue" 2>/dev/null || \
+            warn "No Astroneer logs found yet"
+    else
+        vm_ssh "Get-Content -Path 'C:\AstroneerServer\Astro\Saved\Logs\AstroServerLog.log' -Tail $lines -ErrorAction SilentlyContinue" 2>/dev/null || \
+            warn "No Astroneer logs found yet"
+    fi
 }
 
 cmd_autostart() {
     local mode="${1:-}"
     case "$mode" in
-        on)  sudo virsh autostart "$VM_NAME"; ok "Autostart enabled" ;;
-        off) sudo virsh autostart --disable "$VM_NAME"; ok "Autostart disabled" ;;
+        on)  run sudo virsh autostart "$VM_NAME"; ok "Autostart enabled" ;;
+        off) run sudo virsh autostart --disable "$VM_NAME"; ok "Autostart disabled" ;;
         *)   echo "Usage: ./manage.sh autostart [on|off]" ;;
     esac
 }
 
 cmd_vnc() {
     local host_ip
-    host_ip=$(hostname -I | awk '{print $1}')
+    host_ip=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "<host-ip>")
     echo ""
     echo "  VNC is available for emergency access (Server Core has limited GUI)."
     echo ""
@@ -256,44 +219,55 @@ cmd_vnc() {
 }
 
 cmd_destroy() {
+    if [[ "$DRY_RUN" == true ]]; then
+        echo -e "${DIM}[dry-run] Would destroy VM '$VM_NAME' and remove all storage${NC}"
+        return
+    fi
     echo -e "${RED}This will permanently delete the VM and its disk.${NC}"
     read -rp "Are you sure? (type 'yes' to confirm) " confirm
-    if [ "$confirm" != "yes" ]; then
+    if [[ "$confirm" != "yes" ]]; then
         echo "Aborted."
         return
     fi
-    sudo virsh destroy "$VM_NAME" 2>/dev/null || true
-    sudo virsh undefine "$VM_NAME" --remove-all-storage 2>/dev/null || true
+    run sudo virsh destroy "$VM_NAME" 2>/dev/null || true
+    run sudo virsh undefine "$VM_NAME" --remove-all-storage 2>/dev/null || true
     ok "VM '$VM_NAME' destroyed"
 }
 
 cmd_copy_saves() {
     local src="${1:-}"
-    if [ -z "$src" ]; then
+    if [[ -z "$src" ]]; then
         src="$HOME/services/astroneer/Saved/SaveGames"
     fi
-    if [ ! -d "$src" ]; then
+    if [[ ! -d "$src" ]]; then
         echo "Usage: ./manage.sh copy-saves [/path/to/SaveGames/]"
         echo "Default: $HOME/services/astroneer/Saved/SaveGames"
         return 1
     fi
-    if ! ssh_ready; then
-        fail "SSH is not available. Is the VM running?"
-    fi
+    require_ssh
     info "Copying save files from: $src"
-    sshpass -p "$WIN_PASSWORD" scp -r \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        "$src"/* \
+    vm_scp -r "$src"/* \
         "$WIN_USERNAME@$VM_IP:C:/AstroneerServer/Astro/Saved/SaveGames/"
     ok "Save files copied"
 }
 
 # =============================================================================
-# Main
+# Main — parse global flags, then dispatch
 # =============================================================================
+
+# Extract global flags before the command
+while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+        --dry-run) DRY_RUN=true ;;
+        --version) echo "astroneer-vps v${VERSION}"; exit 0 ;;
+        --help|-h) set -- help ;; # trick: replace $1 with "help" and fall through
+        *)         warn "Unknown flag: $1" ;;
+    esac
+    shift
+done
+
 cmd="${1:-help}"
-shift || true
+shift 2>/dev/null || true
 
 case "$cmd" in
     start)        cmd_start ;;
@@ -305,14 +279,18 @@ case "$cmd" in
     start-server) cmd_start_server ;;
     stop-server)  cmd_stop_server ;;
     update)       cmd_update ;;
-    logs)         cmd_logs ;;
+    logs)         cmd_logs "$@" ;;
     autostart)    cmd_autostart "$@" ;;
     vnc)          cmd_vnc ;;
     destroy)      cmd_destroy ;;
     copy-saves)   cmd_copy_saves "$@" ;;
     help|--help|-h)
         echo ""
-        echo "Usage: ./manage.sh <command>"
+        echo "Usage: ./manage.sh [--dry-run] <command> [args...]"
+        echo ""
+        echo "Global flags:"
+        echo "  --dry-run      Print destructive actions without executing"
+        echo "  --version      Print version and exit"
         echo ""
         echo "VM lifecycle:"
         echo "  start          Start the VM, wait for SSH"
@@ -327,8 +305,8 @@ case "$cmd" in
         echo "  start-server   Start Astroneer inside the VM"
         echo "  stop-server    Stop Astroneer inside the VM"
         echo "  update         Update Astroneer via SteamCMD"
-        echo "  logs           Tail Astroneer server logs"
-        echo "  copy-saves     Copy saves from old Docker setup"
+        echo "  logs           Tail server logs [--lines=N] [--follow|-f]"
+        echo "  copy-saves     Copy saves from old Docker setup [path]"
         echo ""
         echo "Access:"
         echo "  ssh            Interactive SSH session to the VM"

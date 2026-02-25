@@ -26,8 +26,9 @@ Internet → playit.gg (host) → 192.168.122.100:23787 → Windows VM → Astro
 
 ```bash
 # 1. Clone and configure
-git clone <this-repo> && cd astroneer-vm
-nano config.env  # Set your playit.gg IP/port, server name, etc.
+git clone <this-repo> && cd Astroneer-VPS
+cp .env.example .env
+nano .env  # Set your playit.gg IP/port, server name, passwords, etc.
 
 # 2. Download Windows Server 2022 ISO and place it:
 #    /var/lib/libvirt/images/Win2022.iso
@@ -50,42 +51,51 @@ The entire setup takes ~25 minutes (mostly Windows installing itself).
 ```bash
 ./manage.sh start          # Boot the VM, wait for SSH
 ./manage.sh stop           # Graceful shutdown
+./manage.sh restart        # Stop + start
 ./manage.sh status         # VM state, SSH, Astroneer port check
 ./manage.sh ssh            # Interactive SSH into the VM
 
 ./manage.sh start-server   # Start Astroneer inside the VM
 ./manage.sh stop-server    # Stop Astroneer inside the VM
 ./manage.sh update         # Update Astroneer via SteamCMD
-./manage.sh logs           # Tail server logs
+./manage.sh logs           # Tail server logs (--lines=N, --follow)
 ./manage.sh provision      # (Re)install Astroneer server
 
 ./manage.sh copy-saves     # Migrate saves from old Docker setup
 ./manage.sh autostart on   # Start VM on host boot
 ./manage.sh destroy        # Delete VM permanently
+
+# Global flags
+./manage.sh --dry-run destroy   # Preview destructive actions
+./manage.sh --version           # Print version
 ```
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `config.env` | All configurable settings |
+| `.env.example` | Configuration template (copy to `.env`) |
 | `setup.sh` | One-time: install KVM, create VM, provision |
 | `manage.sh` | Daily: start/stop/ssh/status |
-| `autounattend.xml` | Unattended Windows install (Server Core + OpenSSH) |
 | `setup-astroneer.ps1` | Installs SteamCMD, Astroneer, mod, firewall |
+| `lib/common.sh` | Shared: logging, colors, traps, lockfile |
+| `lib/env.sh` | Configuration loader and validator |
+| `lib/ssh.sh` | SSH/SCP helpers for VM communication |
+| `lib/vm.sh` | VM lifecycle helpers (virsh wrappers) |
+| `templates/autounattend.xml.tpl` | Unattended Windows install template |
 
 ## How It Works
 
 1. **`setup.sh`** installs KVM, downloads VirtIO drivers, creates a VM with three CD-ROMs (Windows ISO, VirtIO drivers, autounattend config)
-2. **`autounattend.xml`** installs Windows Server 2022 Core (headless) with VirtIO drivers, creates the `astro` admin account, and installs + starts OpenSSH — all without user interaction
+2. **`templates/autounattend.xml.tpl`** is a template that gets credentials substituted from `.env` at build time, then installs Windows Server 2022 Core (headless) with VirtIO drivers, creates the admin account, and installs + starts OpenSSH — all without user interaction
 3. **`setup.sh`** polls SSH until it's available, then runs the provisioning step
 4. **`setup-astroneer.ps1`** is copied in via SCP and run over SSH — it installs SteamCMD, the Astroneer server, the render distance mod, and configures the firewall
 
-After setup, everything is managed through `manage.sh` which communicates via SSH.
+After setup, everything is managed through `manage.sh` which communicates via SSH. Shared logic lives in `lib/` to avoid duplication.
 
 ## Port Matching
 
-The Astroneer server registers itself with the backend using `PublicIP:Port` from its config. **These must match what's publicly reachable** (your playit.gg allocation), otherwise the server appears offline to clients. Both `config.env` and the server's `Engine.ini` are set to port `23787` by default.
+The Astroneer server registers itself with the backend using `PublicIP:Port` from its config. **These must match what's publicly reachable** (your playit.gg allocation), otherwise the server appears offline to clients. Both `.env` and the server's `Engine.ini` are set to port `23787` by default.
 
 ## Migrating Saves
 
@@ -110,3 +120,14 @@ The Astroneer server registers itself with the backend using `PublicIP:Port` fro
 - Windows Update and Defender real-time scanning are disabled for performance
 - VNC is available as emergency access but SSH is the primary interface
 - The server auto-starts when the VM boots (via startup folder)
+- Logs are written to `~/.local/log/astroneer-vps/` (configurable via `LOG_DIR` in `.env`)
+
+## Development
+
+Lint the shell scripts:
+
+```bash
+shellcheck lib/*.sh manage.sh setup.sh
+```
+
+The project includes a `.shellcheckrc` for consistent linting configuration.

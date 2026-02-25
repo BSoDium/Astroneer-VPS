@@ -21,7 +21,9 @@
       <UserLocale>en-US</UserLocale>
     </component>
 
-    <!-- VirtIO storage driver (required to see the disk) -->
+    <!-- VirtIO storage driver (required to see the disk)
+         Drive letter for the VirtIO CD-ROM varies depending on boot order,
+         so we brute-force D:, E:, F: for all driver paths. -->
     <component name="Microsoft-Windows-PnpCustomizationsWinPE"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -189,30 +191,32 @@
 
       <UserAccounts>
         <AdministratorPassword>
-          <Value>astro123</Value>
+          <Value>@@WIN_PASSWORD@@</Value>
           <PlainText>true</PlainText>
         </AdministratorPassword>
         <LocalAccounts>
           <LocalAccount wcm:action="add">
             <Password>
-              <Value>astro123</Value>
+              <Value>@@WIN_PASSWORD@@</Value>
               <PlainText>true</PlainText>
             </Password>
             <Group>Administrators</Group>
-            <DisplayName>astro</DisplayName>
-            <Name>astro</Name>
+            <DisplayName>@@WIN_USERNAME@@</DisplayName>
+            <Name>@@WIN_USERNAME@@</Name>
           </LocalAccount>
         </LocalAccounts>
       </UserAccounts>
 
       <AutoLogon>
         <Enabled>true</Enabled>
-        <Username>astro</Username>
+        <Username>@@WIN_USERNAME@@</Username>
         <Password>
-          <Value>astro123</Value>
+          <Value>@@WIN_PASSWORD@@</Value>
           <PlainText>true</PlainText>
         </Password>
-        <LogonCount>999</LogonCount>
+        <!-- Autologon only needed for initial provisioning;
+             the Astroneer server auto-starts from the Startup folder -->
+        <LogonCount>10</LogonCount>
       </AutoLogon>
 
       <!-- ============================================================ -->
@@ -260,7 +264,7 @@
           <RequiresUserInput>false</RequiresUserInput>
         </SynchronousCommand>
 
-        <!-- 6. Disable Windows Update -->
+        <!-- 6. Disable Windows Update (performance: avoids background CPU/disk) -->
         <SynchronousCommand wcm:action="add">
           <Order>6</Order>
           <Description>Disable Windows Update</Description>
@@ -268,7 +272,7 @@
           <RequiresUserInput>false</RequiresUserInput>
         </SynchronousCommand>
 
-        <!-- 7. Disable Windows Defender real-time protection -->
+        <!-- 7. Disable Windows Defender real-time protection (performance) -->
         <SynchronousCommand wcm:action="add">
           <Order>7</Order>
           <Description>Disable Defender real-time</Description>

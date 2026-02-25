@@ -1,20 +1,41 @@
 # =============================================================================
 # setup-astroneer.ps1 — Install Astroneer Dedicated Server + mods
 # Run inside the Windows Server VM via SSH:
-#   powershell.exe -ExecutionPolicy Bypass -File C:\setup\setup-astroneer.ps1
+#   powershell.exe -ExecutionPolicy Bypass -File C:\setup-astroneer.ps1
 # =============================================================================
 
 param(
     [string]$InstallPath = "C:\AstroneerServer",
     [int]$ServerPort = 23787,
-    [string]$ServerName = "Vertex",
-    [string]$OwnerName = "BSoDium",
-    [string]$PublicIP = "147.185.221.181"
+    [int]$ConsolePort = 1234,
+    [string]$ServerName = "My Server",
+    [string]$OwnerName = "YourName",
+    [string]$PublicIP = "0.0.0.0"
 )
 
 $ErrorActionPreference = "Stop"
 
 function Write-Step { param([string]$msg) Write-Host "`n==> $msg" -ForegroundColor Cyan }
+
+# Retry wrapper for network operations
+function Invoke-WithRetry {
+    param(
+        [scriptblock]$Action,
+        [int]$MaxAttempts = 3,
+        [int]$DelaySeconds = 5
+    )
+    for ($i = 1; $i -le $MaxAttempts; $i++) {
+        try {
+            & $Action
+            return
+        } catch {
+            if ($i -eq $MaxAttempts) { throw }
+            Write-Warning "Attempt $i/$MaxAttempts failed: $_. Retrying in ${DelaySeconds}s..."
+            Start-Sleep -Seconds $DelaySeconds
+            $DelaySeconds *= 2
+        }
+    }
+}
 
 # --- 1. SteamCMD ---
 Write-Step "Installing SteamCMD"
@@ -22,8 +43,8 @@ $steamDir = "C:\steamcmd"
 if (!(Test-Path "$steamDir\steamcmd.exe")) {
     New-Item -ItemType Directory -Path $steamDir -Force | Out-Null
     $zip = "$env:TEMP\steamcmd.zip"
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip" -OutFile $zip
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+    Invoke-WithRetry { Invoke-WebRequest -Uri "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip" -OutFile $zip }
     Expand-Archive -Path $zip -DestinationPath $steamDir -Force
     Remove-Item $zip
 }
@@ -100,9 +121,9 @@ VerbosePlayerProperties=True
 AutoSaveGameInterval=900
 BackupSaveGamesInterval=7200
 ServerGuid=
-ActiveSaveFileDescriptiveName=YOURSERVERNAME
+ActiveSaveFileDescriptiveName=$ServerName
 ServerAdvertisedAsLAN=False
-ConsolePort=1234
+ConsolePort=$ConsolePort
 "@ | Set-Content -Path $settingsIni -Encoding UTF8
 Write-Host "Server settings written (Name=$ServerName, Owner=$OwnerName, IP=$PublicIP)"
 
@@ -112,7 +133,11 @@ $paksDir = Join-Path $InstallPath "Astro\Content\Paks"
 New-Item -ItemType Directory -Path $paksDir -Force | Out-Null
 $modUrl = "https://github.com/GalaxyBrainGames/Astroneer-DedicatedServerMods/releases/download/v2.0/DedicatedRenderDistance_P.pak"
 $modPath = Join-Path $paksDir "DedicatedRenderDistance_P.pak"
-Invoke-WebRequest -Uri $modUrl -OutFile $modPath
+if (!(Test-Path $modPath)) {
+    Invoke-WithRetry { Invoke-WebRequest -Uri $modUrl -OutFile $modPath }
+} else {
+    Write-Host "Mod already installed"
+}
 Write-Host "Mod installed: $modPath"
 
 # --- 8. Firewall rules ---
@@ -150,7 +175,10 @@ Write-Host "Created $startBat"
 
 # --- 10. Auto-start on login ---
 Write-Step "Setting up auto-start"
-$startupDir = "C:\Users\astro\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
+$startupDir = [Environment]::GetFolderPath('Startup')
+if ([string]::IsNullOrEmpty($startupDir)) {
+    $startupDir = "$env:USERPROFILE\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
+}
 New-Item -ItemType Directory -Path $startupDir -Force | Out-Null
 Copy-Item -Path $startBat -Destination (Join-Path $startupDir "start-astroneer.bat") -Force
 Write-Host "Server will auto-start on login"
@@ -165,10 +193,5 @@ Write-Host "  Port:    $ServerPort"
 Write-Host "  Public:  ${PublicIP}:${ServerPort}"
 Write-Host "  Mod:     DedicatedRenderDistance v2.0"
 Write-Host ""
-Write-Host "Start now with: C:\start-astroneer.bat"
-Write-Host ""
-
-Write-Host ""
-Write-Host "Start the server with: C:\start-astroneer.bat"
-Write-Host "Or from the host:      ./manage.sh start-server"
+Write-Host "  Start:   C:\start-astroneer.bat (or ./manage.sh start-server from host)"
 Write-Host ""

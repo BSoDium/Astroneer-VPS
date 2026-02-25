@@ -4,6 +4,15 @@
 # VM disk images
 *.qcow2
 
+# Environment config (contains passwords/IPs)
+.env
+
+# Logs
+*.log
+
+# macOS
+.DS_Store
+
 # Editor
 .vscode/
 *.swp
