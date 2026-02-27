@@ -10,6 +10,13 @@
 # Logs
 *.log
 
+# Server data (docker-style volumes — user-specific content)
+data/config/*.ini
+data/saves/*
+data/mods/*
+data/backups/*
+!data/**/.gitkeep
+
 # macOS
 .DS_Store
 

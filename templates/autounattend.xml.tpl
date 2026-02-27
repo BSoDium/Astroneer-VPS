@@ -23,7 +23,7 @@
 
     <!-- VirtIO storage driver (required to see the disk)
          Drive letter for the VirtIO CD-ROM varies depending on boot order,
-         so we brute-force D:, E:, F: for all driver paths. -->
+         so we brute-force D:, E:, F: for both w11 and 2k22 driver paths. -->
     <component name="Microsoft-Windows-PnpCustomizationsWinPE"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -55,6 +55,24 @@
         </PathAndCredentials>
         <PathAndCredentials wcm:action="add" wcm:keyValue="9">
           <Path>F:\NetKVM\w11\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="10">
+          <Path>D:\viostor\2k22\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="11">
+          <Path>E:\viostor\2k22\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="12">
+          <Path>F:\viostor\2k22\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="13">
+          <Path>D:\NetKVM\2k22\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="14">
+          <Path>E:\NetKVM\2k22\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="15">
+          <Path>F:\NetKVM\2k22\amd64</Path>
         </PathAndCredentials>
       </DriverPaths>
     </component>
@@ -95,9 +113,11 @@
             <MetaData wcm:action="add">
               <!-- Index 1 = Standard Evaluation (Server Core, no GUI)
                    Index 2 = Standard Evaluation (Desktop Experience)
-                   Using index is more reliable than name matching across ISO variants -->
+                   Desktop Experience is required: Astroneer's UE4 server binary
+                   links against DirectX, DirectSound, OpenGL32 etc., which are
+                   absent in Server Core. -->
               <Key>/IMAGE/INDEX</Key>
-              <Value>1</Value>
+              <Value>2</Value>
             </MetaData>
           </InstallFrom>
           <InstallTo>
@@ -109,11 +129,9 @@
 
       <UserData>
         <AcceptEula>true</AcceptEula>
-        <ProductKey>
-          <!-- Generic KMS client key for Server 2022 Standard -->
-          <Key>VDYBN-27WPP-V4HQT-9VMD4-VMK7H</Key>
-          <WillShowUI>Never</WillShowUI>
-        </ProductKey>
+        <!-- No ProductKey — the evaluation ISO supplies its own.
+             A KMS/GVLK key here would cause "key does not match any image"
+             because the evaluation edition is a different SKU. -->
       </UserData>
     </component>
   </settings>
@@ -162,6 +180,24 @@
         </PathAndCredentials>
         <PathAndCredentials wcm:action="add" wcm:keyValue="6">
           <Path>F:\vioserial\w11\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="7">
+          <Path>D:\Balloon\2k22\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="8">
+          <Path>E:\Balloon\2k22\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="9">
+          <Path>F:\Balloon\2k22\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="10">
+          <Path>D:\vioserial\2k22\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="11">
+          <Path>E:\vioserial\2k22\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="12">
+          <Path>F:\vioserial\2k22\amd64</Path>
         </PathAndCredentials>
       </DriverPaths>
     </component>
@@ -264,17 +300,25 @@
           <RequiresUserInput>false</RequiresUserInput>
         </SynchronousCommand>
 
-        <!-- 6. Disable Windows Update (performance: avoids background CPU/disk) -->
+        <!-- 6. Enable full admin rights over SSH (disable UAC remote token filtering) -->
         <SynchronousCommand wcm:action="add">
           <Order>6</Order>
+          <Description>Disable UAC remote filtering for admin SSH</Description>
+          <CommandLine>reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f</CommandLine>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <!-- 7. Disable Windows Update (performance: avoids background CPU/disk) -->
+        <SynchronousCommand wcm:action="add">
+          <Order>7</Order>
           <Description>Disable Windows Update</Description>
           <CommandLine>%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -Command "Set-Service -Name wuauserv -StartupType Disabled; Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue"</CommandLine>
           <RequiresUserInput>false</RequiresUserInput>
         </SynchronousCommand>
 
-        <!-- 7. Disable Windows Defender real-time protection (performance) -->
+        <!-- 8. Disable Windows Defender real-time protection (performance) -->
         <SynchronousCommand wcm:action="add">
-          <Order>7</Order>
+          <Order>8</Order>
           <Description>Disable Defender real-time</Description>
           <CommandLine>%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -Command "Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue"</CommandLine>
           <RequiresUserInput>false</RequiresUserInput>

@@ -19,6 +19,10 @@ load_env() {
 
     # shellcheck source=/dev/null
     source "$ENV_FILE"
+
+    # Optional variables with defaults
+    ASTRO_PUBLIC_IP="${ASTRO_PUBLIC_IP:-}"
+    ASTRO_LAUNCHER_PORT="${ASTRO_LAUNCHER_PORT:-5000}"
 }
 
 # ---------- validate ----------
@@ -33,7 +37,6 @@ validate_env() {
         VM_NAME VM_IP
         VNC_PASSWORD
         WIN_USERNAME WIN_PASSWORD
-        ASTRO_SERVER_NAME ASTRO_OWNER_NAME ASTRO_PUBLIC_IP
         IMAGES_DIR
     )
     for var in "${required_vars[@]}"; do
@@ -43,7 +46,7 @@ validate_env() {
     done
 
     # Required numeric variables (must be positive integers)
-    local numeric_vars=(VM_RAM VM_CPUS VM_DISK_SIZE VNC_PORT ASTRO_PORT)
+    local numeric_vars=(VM_RAM VM_CPUS VM_DISK_SIZE VNC_PORT ASTRO_PORT ASTRO_LAUNCHER_PORT)
     for var in "${numeric_vars[@]}"; do
         local val="${!var:-}"
         if [[ -z "$val" ]]; then
@@ -54,16 +57,15 @@ validate_env() {
     done
 
     # Port range checks
-    if [[ -n "${VNC_PORT:-}" ]] && [[ "$VNC_PORT" =~ ^[0-9]+$ ]]; then
-        if [[ "$VNC_PORT" -lt 1 || "$VNC_PORT" -gt 65535 ]]; then
-            errors+=("VNC_PORT must be 1-65535 (got: $VNC_PORT)")
+    local port_vars=(VNC_PORT ASTRO_PORT ASTRO_LAUNCHER_PORT)
+    for var in "${port_vars[@]}"; do
+        local val="${!var:-}"
+        if [[ -n "$val" ]] && [[ "$val" =~ ^[0-9]+$ ]]; then
+            if [[ "$val" -lt 1 || "$val" -gt 65535 ]]; then
+                errors+=("$var must be 1-65535 (got: $val)")
+            fi
         fi
-    fi
-    if [[ -n "${ASTRO_PORT:-}" ]] && [[ "$ASTRO_PORT" =~ ^[0-9]+$ ]]; then
-        if [[ "$ASTRO_PORT" -lt 1 || "$ASTRO_PORT" -gt 65535 ]]; then
-            errors+=("ASTRO_PORT must be 1-65535 (got: $ASTRO_PORT)")
-        fi
-    fi
+    done
 
     # Report
     if [[ ${#missing[@]} -gt 0 ]]; then
@@ -84,9 +86,6 @@ validate_env() {
     fi
     if [[ "$VNC_PASSWORD" == "changeme" ]]; then
         warn "VNC_PASSWORD is still set to 'changeme' — change it before setup!"
-    fi
-    if [[ "$ASTRO_PUBLIC_IP" == "0.0.0.0" ]]; then
-        warn "ASTRO_PUBLIC_IP is 0.0.0.0 — set it to your playit.gg IP"
     fi
 
     ok "Configuration validated"

@@ -8,7 +8,6 @@ set -euo pipefail
 
 # ---------- load shared libraries ----------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly SCRIPT_DIR
 for lib in common env ssh vm; do
     # shellcheck disable=SC1090
     source "$SCRIPT_DIR/lib/${lib}.sh"
@@ -64,10 +63,12 @@ if ! grep -qE '(vmx|svm)' /proc/cpuinfo; then
 fi
 ok "CPU virtualization supported"
 
-# Disk space check
+# Disk space check (check parent dir if IMAGES_DIR doesn't exist yet)
 REQUIRED_GB=$(( VM_DISK_SIZE + 5 ))
-if [[ -d "$IMAGES_DIR" ]]; then
-    AVAIL_GB=$(df --output=avail -BG "$IMAGES_DIR" 2>/dev/null | tail -1 | tr -d ' G')
+_disk_check_dir="$IMAGES_DIR"
+[[ ! -d "$_disk_check_dir" ]] && _disk_check_dir="$(dirname "$IMAGES_DIR")"
+if [[ -d "$_disk_check_dir" ]]; then
+    AVAIL_GB=$(df --output=avail -BG "$_disk_check_dir" 2>/dev/null | tail -1 | tr -d ' G')
     if [[ -n "$AVAIL_GB" ]] && [[ "$AVAIL_GB" -lt "$REQUIRED_GB" ]]; then
         fail "Insufficient disk space in $IMAGES_DIR: ${AVAIL_GB}GB available, ${REQUIRED_GB}GB required"
     fi
@@ -78,7 +79,7 @@ fi
 # Step 2: Install KVM packages
 # =============================================================================
 info "Installing KVM packages"
-PACKAGES=(qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virtinst
+PACKAGES=(qemu-system-x86 libvirt-daemon-system libvirt-clients bridge-utils virtinst
           genisoimage sshpass netcat-openbsd)
 NEEDED=()
 for pkg in "${PACKAGES[@]}"; do
@@ -219,7 +220,10 @@ if sudo virsh dominfo "$VM_NAME" &>/dev/null; then
         fi
     fi
     run sudo virsh destroy "$VM_NAME" 2>/dev/null || true
-    run sudo virsh undefine "$VM_NAME" --remove-all-storage 2>/dev/null || true
+    # Only remove the VM disk image, not all attached storage.
+    # --remove-all-storage would also delete the Windows and VirtIO ISOs.
+    run sudo virsh undefine "$VM_NAME" 2>/dev/null || true
+    [[ -f "$IMAGES_DIR/${VM_NAME}.qcow2" ]] && run sudo rm -f "$IMAGES_DIR/${VM_NAME}.qcow2"
     ok "Old VM removed"
 fi
 
@@ -263,8 +267,8 @@ ok "Static DHCP: $VM_MAC → $VM_IP"
 # Step 9: Wait for Windows installation
 # =============================================================================
 echo ""
-info "Windows Server 2022 Core is installing..."
-info "This takes 15-25 minutes. You can monitor via VNC:"
+info "Windows Server 2022 is installing..."
+info "This takes 20-45 minutes. You can monitor via VNC:"
 echo ""
 HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "<host-ip>")
 echo "  From your local machine:"
@@ -295,18 +299,21 @@ fi
 wait "$VIRT_PID" 2>/dev/null || true
 VIRT_PID=""  # clear so cleanup trap doesn't try to kill
 
-ok "SSH is up! Windows Server Core installed successfully."
+ok "SSH is up! Windows Server installed successfully."
 
 # =============================================================================
 # Step 10: Provision Astroneer server
 # =============================================================================
 if [[ "$SKIP_PROVISION" == true ]]; then
-    info "Skipping provisioning (--skip-provision)"
-    info "Run later with: ./manage.sh provision"
+    info "Skipping installation (--skip-provision)"
+    info "Run later with: ./manage.sh install"
 else
-    info "Provisioning Astroneer server via SSH..."
-    "$SCRIPT_DIR/manage.sh" provision
+    info "Installing Astroneer server + AstroLauncher via SSH..."
+    "$SCRIPT_DIR/manage.sh" install
 fi
+
+# Ensure data directory structure exists
+mkdir -p "$SCRIPT_DIR/data/"{config,saves,mods,backups}
 
 echo ""
 echo -e "${GREEN}============================================${NC}"
@@ -315,10 +322,11 @@ echo -e "${GREEN}============================================${NC}"
 echo ""
 echo "  VM:     $VM_NAME ($VM_IP)"
 echo "  SSH:    ssh $WIN_USERNAME@$VM_IP"
-echo "  Server: $ASTRO_PUBLIC_IP:$ASTRO_PORT"
 echo ""
 echo "  Next steps:"
-echo "    1. Update playit.gg tunnel → Local Address: $VM_IP:$ASTRO_PORT"
-echo "    2. Start server: ./manage.sh start-server"
-echo "    3. (Optional) Migrate saves: ./manage.sh copy-saves"
+echo "    1. Edit data/config/AstroServerSettings.ini (server name, owner, password)"
+echo "    2. Edit data/config/Launcher.ini (web UI, Discord, backups)"
+echo "    3. Update playit.gg tunnel -> Local Address: $VM_IP:$ASTRO_PORT"
+echo "    4. Start server: ./manage.sh start-server"
+echo "    5. (Optional) Drop saves into data/saves/ and mods into data/mods/"
 echo ""
