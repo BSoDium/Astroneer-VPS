@@ -9,9 +9,33 @@ readonly VERSION="1.0.0"
 
 # ---------- resolve project root ----------
 # Works whether sourced from the repo root or from lib/
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}")" && pwd)"
+# If the calling script already set SCRIPT_DIR, keep it; otherwise derive it.
+if [[ -z "${SCRIPT_DIR:-}" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}")" && pwd)"
+fi
 readonly SCRIPT_DIR
 readonly PROJECT_ROOT="${SCRIPT_DIR%/lib}"
+
+# ---------- host-side data directory (docker-style volumes) ----------
+readonly DATA_DIR="$PROJECT_ROOT/data"
+readonly DATA_CONFIG_DIR="$DATA_DIR/config"
+readonly DATA_SAVES_DIR="$DATA_DIR/saves"
+readonly DATA_MODS_DIR="$DATA_DIR/mods"
+readonly DATA_BACKUPS_DIR="$DATA_DIR/backups"
+
+# ---------- VM-side paths ----------
+readonly VM_INSTALL_DIR='C:\AstroneerServer'
+readonly VM_CONFIG_DIR='C:\AstroneerServer\Astro\Saved\Config\WindowsServer'
+readonly VM_SAVES_DIR='C:\AstroneerServer\Astro\Saved\SaveGames'
+readonly VM_MODS_DIR='C:\AstroneerServer\Astro\Content\Paks'
+readonly VM_BACKUPS_DIR='C:\AstroneerServer\Astro\Saved\Backup\LauncherBackups'
+readonly VM_LOGS_DIR='C:\AstroneerServer\Astro\Saved\Logs'
+readonly VM_LAUNCHER_INI='C:\AstroneerServer\Launcher.ini'
+readonly VM_LAUNCHER_EXE='C:\AstroneerServer\AstroLauncher.exe'
+
+ensure_data_dirs() {
+    mkdir -p "$DATA_CONFIG_DIR" "$DATA_SAVES_DIR" "$DATA_MODS_DIR" "$DATA_BACKUPS_DIR"
+}
 
 # ---------- colors (each on its own line for grep-ability) ----------
 readonly RED='\033[0;31m'
@@ -85,7 +109,7 @@ run() {
 readonly SSH_TIMEOUT_DEFAULT=120
 readonly SSH_TIMEOUT_START=180
 readonly SHUTDOWN_TIMEOUT=60
-readonly SETUP_SSH_TIMEOUT=1800
+readonly SETUP_SSH_TIMEOUT=3600
 readonly SETUP_SSH_INTERVAL=15
 readonly LOG_TAIL_DEFAULT=50
 
